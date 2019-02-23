@@ -12,14 +12,16 @@
 #include <FastLED_NeoMatrix.h>
 #include <Fonts/TomThumb.h>
 #include <LightDependentResistor.h>
+#include <Wire.h>
+#include <SparkFun_APDS9960.h>
 
-String version = "0.34";
+String version = "0.36";
 
 ////////////////////////////////////////////////////////////////
 ///////////////////////// Config begin /////////////////////////
 // Wifi Config
-const char *ssid = "xxxxx";
-const char *password = "xxxxxx";
+const char *ssid = "Kindergarten";
+const char *password = "53825382";
 char *awtrix_server = "192.168.178.39";
 
 /// LDR Config
@@ -57,6 +59,14 @@ LightDependentResistor photocell(LDR_PIN, LDR_RESISTOR, LDR_PHOTOCELL);
 unsigned long startTime = 0;
 unsigned long endTime = 0;
 unsigned long duration;
+
+
+// APDS-9960
+#define APDS9960_INT    D6  //AKA GPIO12 -- Interupt pin
+#define APDS9960_SDA    D3  //AKA GPIO0
+#define APDS9960_SCL    D1  //AKA GPIO5
+SparkFun_APDS9960 apds = SparkFun_APDS9960();
+volatile bool isr_flag = 0;
 
 // from http://playground.arduino.cc/Main/Utf8ascii
 // ****** UTF8-Decoder: convert UTF8-string to extended ASCII *******
@@ -277,6 +287,44 @@ void reconnect()
 	}
 }
 
+void interruptRoutine() {
+  isr_flag = 1;
+}
+
+void handleGesture() {
+    if ( apds.isGestureAvailable() ) {
+    switch ( apds.readGesture() ) {
+      case DIR_UP:
+			 Serial.println("UP");
+        client.publish("control", "UP");
+        break;
+      case DIR_DOWN:
+			     Serial.println("DOWN");
+        client.publish("control", "DOWN");
+        break;
+      case DIR_LEFT:
+			    Serial.println("LEFT");
+     client.publish("control", "LEFT");
+        break;
+      case DIR_RIGHT:
+			 Serial.println("RIGHT");
+       client.publish("control", "RIGHT");
+        break;
+      case DIR_NEAR:
+			  Serial.println("NEAR");
+         client.publish("control", "NEAR");
+        break;
+      case DIR_FAR:
+			  Serial.println("FAR");
+        client.publish("control", "FAR");
+        break;
+      default:
+			 Serial.println("NONE");
+        client.publish("control", "NONE");
+    }
+  }
+}
+
 void setup()
 {
 	FastLED.addLeds<NEOPIXEL, MATRIX_PIN>(leds, NUMMATRIX).setCorrection(TypicalLEDStrip);
@@ -306,9 +354,27 @@ void setup()
 	httpUpdater.setup(&server);
 	server.onNotFound(handleNotFound);
 	server.begin();
-
+Serial.begin(115200);
 	client.setServer(awtrix_server, 7001);
 	client.setCallback(callback);
+
+	Wire.begin(APDS9960_SDA,APDS9960_SCL);
+  pinMode(APDS9960_INT, INPUT);
+	attachInterrupt(APDS9960_INT, interruptRoutine, FALLING);
+
+	  // Initialize APDS-9960 (configure I2C and initial values)
+  if ( apds.init() ) {
+    Serial.println(F("APDS-9960 initialization complete"));
+  } else {
+    Serial.println(F("Something went wrong during APDS-9960 init!"));
+  }
+  
+  // Start running the APDS-9960 gesture sensor engine
+  if ( apds.enableGestureSensor(true) ) {
+    Serial.println(F("Gesture sensor is now running"));
+  } else {
+    Serial.println(F("Something went wrong during gesture sensor init!"));
+  }
 }
 
 void loop()
@@ -317,9 +383,18 @@ void loop()
 	if (!client.connected())
 	{
 		reconnect();
+	}else{
+		if( isr_flag == 1 ) {
+    detachInterrupt(APDS9960_INT);
+    handleGesture();
+    isr_flag = 0;
+    attachInterrupt(APDS9960_INT, interruptRoutine, FALLING);
+  }
 	}
 	client.loop();
 
 	server.handleClient();
-	MDNS.update();
+	 
+
 }
+
